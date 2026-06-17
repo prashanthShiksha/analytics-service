@@ -36,10 +36,17 @@ class Database:
             schema_sql = schema_sql.replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ")
             await conn.execute(schema_sql)
 
-            prompt_count = await conn.fetchval("SELECT COUNT(*) FROM prompts")
-            if int(prompt_count or 0) == 0:
-                seed_sql = SEED_PROMPTS_FILE.read_text(encoding="utf-8")
-                await conn.execute(seed_sql)
+            # Dynamic migrations — add new columns to existing tables if they don't exist
+            await conn.execute(
+                "ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS content_quality TEXT;"
+            )
+            await conn.execute(
+                "ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS similarity_score FLOAT;"
+            )
+
+            # Always run the seed script to keep prompts in sync with seed_prompts.sql
+            seed_sql = SEED_PROMPTS_FILE.read_text(encoding="utf-8")
+            await conn.execute(seed_sql)
 
             logger.info("Database schema initialized successfully.")
 

@@ -195,6 +195,8 @@ CREATE TABLE analysis_results (
     confidence_score        FLOAT,
     justification           TEXT,
     multi_theme_mapped      BOOLEAN NOT NULL DEFAULT FALSE,
+    content_quality         TEXT,            -- 'Standard', 'Others', 'Unknown/Unclear', 'Flagged'
+    similarity_score        FLOAT,           -- Cosine similarity from local embedding match
     meta_data               JSONB,
     
     FOREIGN KEY (submission_id, tenant_code) 

@@ -7,11 +7,11 @@ with workflow.unsafe.imports_passed_through():
     from temporalio.common import RetryPolicy
     from app.temporal.activities import (
         pii_detection_activity,
-        thematic_analysis_activity,
         deface_blur_activity,
         update_status_activity,
         fetch_pending_submissions_activity
     )
+    from app.temporal.thematic_activity import thematic_classification_activity
 
 @workflow.defn
 class ConfigDrivenProcessingWorkflow:
@@ -38,11 +38,21 @@ class ConfigDrivenProcessingWorkflow:
 
         completed_steps = []
         process_metadata = {}
+        steps_execution = []
+        for step in process_steps:
+            steps_execution.append({
+                "name": step.get("name"),
+                "status": "pending",
+                "error": None,
+                "completed_timestamp": None
+            })
 
         try:
-            for step in process_steps:
+            for idx, step in enumerate(process_steps):
                 step_name = step.get("name")
                 target_columns = step.get("columns", [])
+
+                workflow.logger.info(f"Starting workflow step {idx + 1}/{len(process_steps)}: '{step_name}' for submission_id: {submission_id}")
 
                 if step_name == "pii_detection":
                     res = await workflow.execute_activity(
@@ -55,12 +65,16 @@ class ConfigDrivenProcessingWorkflow:
                         start_to_close_timeout=timedelta(minutes=5),
                         retry_policy=retry_policy
                     )
+                    status_val = res.get("status", "success") if isinstance(res, dict) else "success"
+                    steps_execution[idx]["status"] = status_val
+                    steps_execution[idx]["completed_timestamp"] = workflow.now().isoformat()
                     completed_steps.append("pii_detection")
                     process_metadata["pii_detection"] = res
+                    workflow.logger.info(f"Completed workflow step: '{step_name}' with status: {status_val}")
 
                 elif step_name == "thematic_analysis":
                     res = await workflow.execute_activity(
-                        thematic_analysis_activity,
+                        thematic_classification_activity,
                         {
                             "submission_id": submission_id,
                             "tenant_code": tenant_code,
@@ -69,8 +83,12 @@ class ConfigDrivenProcessingWorkflow:
                         start_to_close_timeout=timedelta(minutes=5),
                         retry_policy=retry_policy
                     )
-                    completed_steps.append("thematic_analysis")
-                    process_metadata["thematic_analysis"] = res
+                    status_val = res.get("status", "success") if isinstance(res, dict) else "success"
+                    steps_execution[idx]["status"] = status_val
+                    steps_execution[idx]["completed_timestamp"] = workflow.now().isoformat()
+                    completed_steps.append("thematic_classification")
+                    process_metadata["thematic_classification"] = res
+                    workflow.logger.info(f"Completed workflow step: '{step_name}' with status: {status_val}")
 
                 elif step_name in ("image_blur", "image_blurring"):
                     res = await workflow.execute_activity(
@@ -82,8 +100,19 @@ class ConfigDrivenProcessingWorkflow:
                         start_to_close_timeout=timedelta(minutes=15),
                         retry_policy=retry_policy
                     )
+                    status_val = res.get("status", "success") if isinstance(res, dict) else "success"
+                    steps_execution[idx]["status"] = status_val
+                    steps_execution[idx]["completed_timestamp"] = workflow.now().isoformat()
                     completed_steps.append("image_blur")
                     process_metadata["image_blur"] = res
+                    workflow.logger.info(f"Completed workflow step: '{step_name}' with status: {status_val}")
+
+                else:
+                    unsupported_err = f"Unsupported step name: {step_name}"
+                    steps_execution[idx]["status"] = "failed"
+                    steps_execution[idx]["error"] = unsupported_err
+                    steps_execution[idx]["completed_timestamp"] = workflow.now().isoformat()
+                    raise ValueError(unsupported_err)
 
             # Update status to 'success' with execution details
             await workflow.execute_activity(
@@ -93,7 +122,8 @@ class ConfigDrivenProcessingWorkflow:
                     "tenant_code": tenant_code,
                     "status": "success",
                     "process_status": {
-                        "completed_steps": completed_steps,
+                        "status": "success",
+                        "steps": steps_execution,
                         "metadata": process_metadata,
                         "timestamp": workflow.now().isoformat()
                     }
@@ -105,6 +135,18 @@ class ConfigDrivenProcessingWorkflow:
         except Exception as e:
             workflow.logger.error(f"Ingestion processing failed for {submission_id}: {e}")
             
+            # Locate which step failed and mark it, plus mark remaining as skipped
+            failed_found = False
+            for s in steps_execution:
+                if s["status"] == "pending":
+                    if not failed_found:
+                        s["status"] = "failed"
+                        s["error"] = str(e)
+                        s["completed_timestamp"] = workflow.now().isoformat()
+                        failed_found = True
+                    else:
+                        s["status"] = "skipped"
+
             # Update status to 'failed' with error details
             await workflow.execute_activity(
                 update_status_activity,
@@ -113,8 +155,10 @@ class ConfigDrivenProcessingWorkflow:
                     "tenant_code": tenant_code,
                     "status": "failed",
                     "process_status": {
+                        "status": "failed",
                         "failed_at_step": completed_steps[-1] if completed_steps else "ingestion",
                         "error_message": str(e),
+                        "steps": steps_execution,
                         "timestamp": workflow.now().isoformat()
                     }
                 },
@@ -123,7 +167,11 @@ class ConfigDrivenProcessingWorkflow:
             )
             raise
 
-        return {"submission_id": submission_id, "status": "success"}
+        return {
+            "submission_id": submission_id,
+            "status": "success",
+            "steps": steps_execution
+        }
 
 
 @workflow.defn

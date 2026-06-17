@@ -374,21 +374,27 @@ async def insert_analysis_result(
     analysis_type: str,
     statements: str,
     statement_type: str,
-    confidence_score: float,
-    justification: str,
+    confidence_score: Optional[float] = None,
+    justification: Optional[str] = None,
+    content_quality: Optional[str] = None,
+    similarity_score: Optional[float] = None,
+    multi_theme_mapped: bool = False,
     meta_data: Optional[Dict[str, Any]] = None
 ) -> None:
     """
     Saves theme/environmental extraction analysis output to database.
     """
+    if similarity_score is not None:
+        similarity_score = round(similarity_score, 2)
     meta_json = json.dumps(meta_data) if meta_data else None
     await conn.execute(
         """
         INSERT INTO analysis_results (
             submission_id, tenant_code, theme_id, analysis_type, statements,
-            statement_type, confidence_score, justification, meta_data
+            statement_type, confidence_score, justification, content_quality,
+            similarity_score, multi_theme_mapped, meta_data
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         """,
         submission_id,
         tenant_code,
@@ -398,5 +404,49 @@ async def insert_analysis_result(
         statement_type,
         confidence_score,
         justification,
+        content_quality,
+        similarity_score,
+        multi_theme_mapped,
         meta_json
     )
+
+
+async def get_submission_type_and_payload(conn: asyncpg.Connection, submission_id: str, tenant_code: str) -> tuple:
+    """
+    Retrieves the submission type and payload details for story or discussion submissions.
+    """
+    sub_row = await conn.fetchrow(
+        "SELECT submission_type FROM submissions WHERE submission_id = $1 AND tenant_code = $2",
+        submission_id, tenant_code
+    )
+    if not sub_row:
+        raise ValueError(f"Submission {submission_id} not found in database.")
+    
+    sub_type = sub_row["submission_type"].lower().strip()
+    
+    if "story" in sub_type:
+        payload_row = await conn.fetchrow(
+            """
+            SELECT title, objective, challenge, action_steps, impact, duration, blurb, content, image_urls 
+            FROM story_submissions 
+            WHERE submission_id = $1 AND tenant_code = $2
+            """,
+            submission_id, tenant_code
+        )
+    elif "discussion" in sub_type:
+        payload_row = await conn.fetchrow(
+            """
+            SELECT title, challenges, solutions, author, language, image_urls 
+            FROM discussion_submissions 
+            WHERE submission_id = $1 AND tenant_code = $2
+            """,
+            submission_id, tenant_code
+        )
+    else:
+        raise ValueError(f"Unsupported submission type: {sub_type}")
+
+    if not payload_row:
+        raise ValueError(f"Payload details not found for {submission_id} under type {sub_type}.")
+
+    return sub_type, dict(payload_row)
+

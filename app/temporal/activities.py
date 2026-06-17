@@ -1,16 +1,16 @@
 import json
 import logging
 import os
+import re
 import urllib.request
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from temporalio import activity
 
 from app.config import settings
 from app.database.db import db
-from app.database.operations import insert_llm_log, insert_analysis_result
+from app.database.operations import insert_llm_log, get_submission_type_and_payload
 from app.services.pii import mask_pii_text
-from app.services.thematic import extract_thematic_analysis
 from app.services.image_blur import anonymize_face
 
 logger = logging.getLogger("analytics_service.temporal.activities")
@@ -49,44 +49,6 @@ async def _get_prompt_version_id(conn, analysis_type: str) -> str:
         raise RuntimeError(f"No active {analysis_type} prompt version found in the database.")
     return str(row["id"])
 
-
-async def _get_submission_type_and_payload(conn, submission_id: str, tenant_code: str) -> tuple:
-    sub_row = await conn.fetchrow(
-        "SELECT submission_type FROM submissions WHERE submission_id = $1 AND tenant_code = $2",
-        submission_id, tenant_code
-    )
-    if not sub_row:
-        raise ValueError(f"Submission {submission_id} not found in database.")
-    
-    sub_type = sub_row["submission_type"].lower().strip()
-    
-    if "story" in sub_type:
-        payload_row = await conn.fetchrow(
-            """
-            SELECT title, objective, challenge, action_steps, impact, duration, blurb, content, image_urls 
-            FROM story_submissions 
-            WHERE submission_id = $1 AND tenant_code = $2
-            """,
-            submission_id, tenant_code
-        )
-    elif "discussion" in sub_type:
-        payload_row = await conn.fetchrow(
-            """
-            SELECT title, challenges, solutions, author, language, image_urls 
-            FROM discussion_submissions 
-            WHERE submission_id = $1 AND tenant_code = $2
-            """,
-            submission_id, tenant_code
-        )
-    else:
-        raise ValueError(f"Unsupported submission type: {sub_type}")
-
-    if not payload_row:
-        raise ValueError(f"Payload details not found for {submission_id} under type {sub_type}.")
-
-    return sub_type, dict(payload_row)
-
-
 @activity.defn
 async def pii_detection_activity(params: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -100,7 +62,7 @@ async def pii_detection_activity(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "skipped", "reason": "no columns to mask"}
 
     async with db.pool.acquire() as conn:
-        sub_type, payload = await _get_submission_type_and_payload(conn, submission_id, tenant_code)
+        sub_type, payload = await get_submission_type_and_payload(conn, submission_id, tenant_code)
         prompt_version_id = await _get_prompt_version_id(conn, "pii")
 
         updated_fields = {}
@@ -159,99 +121,6 @@ async def pii_detection_activity(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @activity.defn
-async def thematic_analysis_activity(params: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Temporal activity that performs thematic analysis on textual columns, upserts findings to analysis_results.
-    """
-    submission_id = params["submission_id"]
-    tenant_code = params["tenant_code"]
-    target_columns = params["target_columns"]
-
-    if not target_columns:
-        return {"status": "skipped", "reason": "no columns specified"}
-
-    async with db.pool.acquire() as conn:
-        sub_type, payload = await _get_submission_type_and_payload(conn, submission_id, tenant_code)
-
-        content_parts = []
-        for col in target_columns:
-            db_col = "challenge" if col == "challenges" and sub_type == "story" else col
-            val = payload.get(db_col)
-            if val:
-                content_parts.append(str(val))
-
-        combined_text = "\n\n".join(content_parts)
-        if not combined_text.strip():
-            return {"status": "skipped", "reason": "content columns are empty"}
-
-        # Perform thematic extraction
-        try:
-            theme_data = extract_thematic_analysis(combined_text)
-        except Exception as e:
-            logger.error(f"Thematic extraction failed: {e}")
-            raise
-
-        theme_name = theme_data["theme_name"]
-        theme_def = theme_data["theme_definition"]
-        keywords_list = theme_data["keywords"]
-        confidence = theme_data["confidence_score"]
-
-        # Ensure theme metadata exists in 'themes' table
-        theme_id = await conn.fetchval(
-            """
-            INSERT INTO themes (name, definitions, keywords, status)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (name) DO UPDATE SET 
-                definitions = COALESCE(EXCLUDED.definitions, themes.definitions),
-                keywords = COALESCE(EXCLUDED.keywords, themes.keywords)
-            RETURNING id;
-            """,
-            theme_name,
-            theme_def,
-            ",".join(keywords_list),
-            "Draft"
-        )
-        if not theme_id:
-            theme_id = await conn.fetchval("SELECT id FROM themes WHERE name = $1", theme_name)
-
-        # Clear existing analysis results for this submission
-        await conn.execute(
-            "DELETE FROM analysis_results WHERE submission_id = $1 AND tenant_code = $2 AND analysis_type = 'theme'",
-            submission_id, tenant_code
-        )
-
-        # Save new analysis result
-        await insert_analysis_result(
-            conn,
-            submission_id=submission_id,
-            tenant_code=tenant_code,
-            theme_id=theme_id,
-            analysis_type="theme",
-            statements=combined_text[:500] + "...", # representative excerpt
-            statement_type=",".join(target_columns),
-            confidence_score=confidence,
-            justification=theme_def
-        )
-
-        # Update LLM logs table using the DB-managed prompt template.
-        prompt_version_id = await _get_prompt_version_id(conn, "theme")
-
-        await insert_llm_log(
-            conn,
-            submission_id=submission_id,
-            tenant_code=tenant_code,
-            model_name=settings.OPENROUTER_MODEL,
-            analysis_type="theme",
-            prompt_version_id=prompt_version_id,
-            prompt_tokens=len(combined_text.split()),
-            completion_tokens=50,
-            status="success"
-        )
-
-        return theme_data
-
-
-@activity.defn
 async def deface_blur_activity(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Temporal activity that downloads and runs local OpenCV/ONNX face blurring on ingestion images.
@@ -260,7 +129,7 @@ async def deface_blur_activity(params: Dict[str, Any]) -> Dict[str, Any]:
     tenant_code = params["tenant_code"]
 
     async with db.pool.acquire() as conn:
-        sub_type, payload = await _get_submission_type_and_payload(conn, submission_id, tenant_code)
+        sub_type, payload = await get_submission_type_and_payload(conn, submission_id, tenant_code)
         
         image_urls = payload.get("image_urls")
         if not image_urls:

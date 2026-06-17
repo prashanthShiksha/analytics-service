@@ -8,11 +8,11 @@ from app.database.db import db
 from app.temporal.workflows import ConfigDrivenProcessingWorkflow, BatchProcessingWorkflow
 from app.temporal.activities import (
     pii_detection_activity,
-    thematic_analysis_activity,
     deface_blur_activity,
     update_status_activity,
     fetch_pending_submissions_activity
 )
+from app.temporal.thematic_activity import thematic_classification_activity
 
 logger = logging.getLogger("analytics_service.temporal.worker")
 
@@ -35,7 +35,7 @@ async def start_worker():
     workflows = [ConfigDrivenProcessingWorkflow, BatchProcessingWorkflow]
     activities = [
         pii_detection_activity,
-        thematic_analysis_activity,
+        thematic_classification_activity,
         deface_blur_activity,
         update_status_activity,
         fetch_pending_submissions_activity

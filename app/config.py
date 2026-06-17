@@ -32,11 +32,18 @@ class Settings(BaseSettings):
 
     # Scoped Ingestion Pipeline Configuration (JSON strings loaded from env)
     PROCESS_CONFIG_STORY: str = Field(
-        default='[{"name": "pii_detection", "columns": ["challenge"]}, {"name": "thematic_analysis", "columns": ["objective"]}]'
+        default='[{"name": "pii_detection", "columns": ["objective"]}, {"name": "thematic_analysis", "columns": ["objective"]}]'
     )
     PROCESS_CONFIG_DISCUSSION: str = Field(
-        default='[{"name": "pii_detection", "columns": ["challenges"]}]'
+        default='[{"name": "pii_detection", "columns": ["challenges"]}, {"name": "thematic_analysis", "columns": ["challenges"]}]'
     )
+
+    # Thematic Classification Configuration
+    MINIMUM_THEME_WORD_COUNT: int = Field(default=5)
+    THEMATIC_STATEMENT_DELIMITER: str = Field(default="|")
+    EMBEDDING_MODEL_NAME: str = Field(default="all-MiniLM-L6-v2")
+    SIMILARITY_SCORE_THRESHOLD: float = Field(default=0.65)
+    LLM_CONFIDENCE_SCORE_THRESHOLD: float = Field(default=0.8)
 
     model_config = SettingsConfigDict(
         env_file=".env",

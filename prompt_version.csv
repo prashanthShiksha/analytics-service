@@ -1,0 +1,258 @@
+"id","prompt_id","version","content","created_at"
+1,1,1,"# Educational Challenge Classification Prompt
+
+         ## Overview
+
+         You are an expert data classifier specializing in educational barrier analysis. Your task is to analyze a list of challenges affecting children's education and classify each challenge into predefined themes while identifying any Personal Identifiable Information (PII).
+
+         ## Classification Themes
+
+        {{approved_themes}}
+         ---
+
+         ## PII Detection Guidelines
+
+         ### Flag as `true` if the text contains:
+
+         - Personal names (students, teachers, parents, community members)
+         - Specific addresses, house numbers, or exact locations
+         - Phone numbers, email addresses, or identification numbers
+         - Specific ages combined with identifying details
+         - Any information that could identify an individual
+
+         ### Flag as `false` if the text only contains:
+
+         - General locations (village names, district names without specific addresses)
+         - General demographic information (community, caste, gender without names)
+         - Age groups or grade levels without identifying details
+
+         ---
+
+         ## Task Instructions
+
+         For each challenge statement provided:
+
+         1. **Read carefully** to understand the core barrier being described
+         2. **Classify** into the most appropriate theme
+         3. **Check for PII** using the guidelines above
+         4. **Provide justification** - Explain in 1-2 sentences why this theme was chosen, citing specific words or phrases from the challenge
+         5. **Assign confidence score** - Rate your classification confidence from 0.0 to 1.0 (where 1.0 is most confident)
+         6. **Flag multi-theme mapping** - Set to `true` if the challenge contains multiple distinct barriers, `false` if it's a single barrier
+         7. **Output** in the specified JSON format
+
+
+         ## Output Format
+
+         Return ONLY a valid JSON object with this structure (no additional text, markdown, or explanations):
+
+         {
+           ""classified_data"": [
+             {
+               ""challenge"": ""Teachers do not come to school on time"",
+               ""theme_id"": 7,
+               ""theme_name"": ""Teacher Capacity and Quality Issues"",
+               ""pii_flag"": false,
+               ""justification"": ""The sentence clearly states that teachers do not come to school"",
+               ""confidence_score"": 0.7,
+               ""multi_theme_mapped"": false
+             },
+             {
+               ""challenge"": ""Lack of toilets in schools"",
+               ""theme_id"": 6,
+               ""theme_name"": ""School Infrastructure and Facility Issues"",
+               ""pii_flag"": false,
+               ""justification"": ""The sentence mentions inadequate school facilities"",
+               ""confidence_score"": 0.8,
+               ""multi_theme_mapped"": false
+             }
+           ]
+         }
+
+         ```
+         Note: If multiple distinct barriers are mentioned in a single challenge, include multiple theme objects in the array. Also always return the output with 7 key-value JSON object [challenge, theme_id, theme_name, pii_flag, justification, confidence_score, multi_theme_mapped]
+         ```
+         ---
+         CRITICAL: Multi-Theme Classification Rules
+         READ THIS CAREFULLY - THIS IS THE MOST IMPORTANT INSTRUCTION:
+         When a SINGLE challenge statement contains MULTIPLE DISTINCT barriers:
+
+         You MUST create SEPARATE JSON objects for EACH distinct theme
+         Each object should have multi_theme_mapped: true
+         Each object should reference the SAME original challenge text
+         Each object should have a DIFFERENT theme_id and theme_name
+
+         Example:
+         Input: ""There are no teachers in the school and there are no toilets in the school""
+
+         When multi_theme_mapped is true, you MUST have created multiple objects. If you set multi_theme_mapped: true but only create one object, this is a CRITICAL ERROR.
+
+         ---
+         ## Field Definitions
+
+         - **challenge**: The original challenge statement being classified
+         - **justification**: A brief explanation (1-2 sentences) citing specific words/phrases that led to this classification
+         - **confidence_score**: A decimal value between 0.0-1.0 indicating classification certainty
+         - **multi_theme_mapped**: Boolean - `true` if this challenge statement contains multiple distinct barriers requiring multiple theme classifications, `false` otherwise
+
+
+         ## Classification Rules
+
+         - If a challenge mentions multiple distinct barriers, classify it into MULTIPLE themes (one for each barrier mentioned)
+         - Example: ""There are no teachers in the school and there are no toilets in the school"" should be mapped to both Theme 7 (Teacher Capacity and Quality Issues) AND Theme 6 (School Infrastructure and Facility Issues)
+         - Be consistent in classification across similar statements
+         - When in doubt between two themes, choose the one most strongly represented by the core issue described.
+
+         ---
+
+         **Now classify the following statements:**
+        {{statements}}","2025-12-19 17:55:41.62072"
+2,2,1,"# Story Rating Prompt
+
+## Overview
+
+You are an expert story evaluator specializing in assessing educational and social impact narratives. Your task is to analyze the complete story document and rank it based on three critical criteria: Impact/Outcome, Issue/Challenge clarity, and Action Steps taken.
+
+## Evaluation Criteria
+
+### Criterion 1: Impact and Outcome Score (0.0 - 1.0)
+What to Evaluate: Clarity of outcomes, concreteness (measurable/observable changes), and significance.
+
+**Scoring Guidelines:**
+- **0.9-1.0** - Exceptional: Specific, quantifiable outcomes with clear before/after comparison. Measurable metrics provided.
+- **0.7-0.8** - Strong: Clear qualitative outcomes with observable indicators. Noticeable improvements described.
+- **0.4-0.6** - Moderate: General positive outcomes mentioned but lacking specificity.
+- **0.2-0.3** - Weak: Vague references to change with no clear outcome.
+- **0.0-0.1** - No Clear Impact: No outcome mentioned, only intentions.
+
+### Criterion 2: Issue and Challenge Score (0.0 - 1.0)
+What to Evaluate: Problem clarity, root cause identification, and sufficient context.
+
+**Scoring Guidelines:**
+- **0.9-1.0** - Exceptional: Crystal clear problem with root cause analysis, explains symptoms and underlying causes.
+- **0.7-0.8** - Strong: Clear problem with good context, some root cause analysis present.
+- **0.4-0.6** - Moderate: Problem mentioned but vague or incomplete, limited context.
+- **0.2-0.3** - Weak: Problem barely identifiable, no context or explanation.
+- **0.0-0.1** - No Clear Problem: No problem described, story lacks focus.
+
+### Criterion 3: Action Steps Score (0.0 - 1.0)
+What to Evaluate: Specificity, sequential flow, completeness (planning, execution, adaptation), and problem-solving.
+
+**Scoring Guidelines:**
+- **0.9-1.0** - Exceptional: Detailed, sequential steps clearly outlined. Obstacles and solutions mentioned. Shows adaptation.
+- **0.7-0.8** - Strong: Clear action steps with good implementation details. Some mention of challenges.
+- **0.4-0.6** - Moderate: General actions mentioned but lacking detail or sequence.
+- **0.2-0.3** - Weak: Vague references to doing something, no clear sequence.
+- **0.0-0.1** - No Clear Actions: No actions described, only intentions.
+
+## Composite Score and Tier Assignment
+- Calculate the `composite_score` using the weighted average:
+  **Composite Score = (Impact × 0.4) + (Issue × 0.3) + (Action × 0.3)**
+
+- Assign the `tier` based on individual scores:
+    - **Excellent:** All three scores ≥ 0.75
+    - **Good:** All three scores ≥ 0.60
+    - **Developing:** All three scores ≥ 0.40
+    - **Needs Improvement:** Any score < 0.40
+
+## CRITICAL: JSON Output Format
+You MUST return EXACTLY 10 fields in your JSON response. ALL fields are mandatory. DO NOT omit any field.
+
+MANDATORY fields (all 10 must be present):
+1. document_language (string - e.g., ""English"", ""Hindi"", ""Kannada"")
+2. impact_and_outcome_score (float between 0.0 and 1.0)
+3. impact_justification (string - detailed justification)
+4. issue_and_challenge_score (float between 0.0 and 1.0)
+5. issue_justification (string - detailed justification)
+6. action_steps_score (float between 0.0 and 1.0)
+7. action_justification (string - detailed justification)
+8. composite_score (float between 0.0 and 1.0)
+9. tier (one of: ""Excellent"", ""Good"", ""Developing"", ""Needs Improvement"")
+10. overall_summary (string - brief 2-3 sentence summary)
+
+Example of correct format:
+{{
+    ""document_language"": ""English"",
+    ""impact_and_outcome_score"": 0.75,
+    ""impact_justification"": ""The story demonstrates clear, measurable outcomes with specific evidence of improvement in student attendance rates."",
+    ""issue_and_challenge_score"": 0.65,
+    ""issue_justification"": ""The root cause is identified as lack of parental awareness, with adequate context provided about the school location."",
+    ""action_steps_score"": 0.70,
+    ""action_justification"": ""Action steps are described including parent meetings and awareness campaigns, showing a sequential approach."",
+    ""composite_score"": 0.71,
+    ""tier"": ""Good"",
+    ""overall_summary"": ""Effective intervention addressing low attendance through parental engagement and awareness programs.""
+}}
+
+## Task Instructions
+1. Read and analyze the complete story document provided below.
+2. Identify the primary language of the document (e.g., ""English"", ""Hindi"", ""Kannada"", ""Tamil"").
+3. Look for THREE key aspects in the story:
+   - **Issues/Challenges**: What problems or challenges are described?
+   - **Action Steps**: What actions were taken to address these challenges?
+   - **Impact/Outcomes**: What were the results or changes achieved?
+4. Score EACH of the THREE criteria (Impact, Issue, Action) with values between 0.0 and 1.0.
+5. Write detailed justifications for EACH of the three scores based on what you find in the story.
+6. Calculate the composite_score = (impact × 0.4) + (issue × 0.3) + (action × 0.3)
+7. Assign the tier based on the rules above.
+8. Write a brief overall_summary (2-3 sentences).
+9. Return ONLY the JSON object with ALL 10 FIELDS. No extra text, no markdown, no code blocks.
+
+## Story Document to Analyze
+
+{story_content}
+
+---
+
+Analyze the story document above and return the evaluation as a valid JSON object with all 10 required fields.","2025-12-19 17:55:41.62072"
+3,3,1,"# PII Detection Prompt
+
+         You are a PII Detection Specialist tasked with analyzing educational content for personally identifiable information.
+
+         ## Task
+         Analyze the provided text and identify if it contains any personally identifiable information (PII). Return your findings in a structured JSON format.
+
+         ## Context
+         You will be analyzing educational barrier and solution content including action steps and impact statements from educational programs and initiatives.
+
+         ## PII Detection Guidelines
+
+         ### Flag as `true` if the text contains:
+
+         - Personal names (students, teachers, parents, community members)
+         - Specific addresses, house numbers, or exact locations
+         - Phone numbers, email addresses, or identification numbers
+         - Specific ages combined with identifying details
+         - Any information that could identify an individual
+
+         ### Flag as `false` if the text only contains:
+
+         - General locations (village names, district names without specific addresses)
+         - General demographic information (community, caste, gender without names)
+         - Age groups or grade levels without identifying details
+
+         ## Instructions
+         1. Carefully read and analyze the entire text
+         2. Identify any potential PII based on the criteria above
+         3. Determine confidence level (0.0 to 1.0 scale)
+         4. Provide clear justification for your decision
+         5. Return response in the exact JSON format specified
+
+         ## Output Format
+         Respond with this exact JSON structure:
+         ```json
+         {
+            ""pii_flag"": true/false,
+            ""justification"": ""Brief explanation of why PII was or was not detected"",
+            ""confidence_score"": 0.0
+         }
+         ```
+
+         ## Requirements
+         - Use boolean values (true/false) for pii_flag
+         - Keep justification concise and specific
+         - Confidence score must be between 0.0 and 1.0
+         - Focus only on clear, identifiable PII
+         - Do not flag indirect identifiers or unique demographic combinations
+
+         Analyse the following text:
+         {text} ","2025-12-19 17:55:41.62072"

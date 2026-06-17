@@ -1,31 +1,67 @@
+-- =========================================================================
+-- SEED PROMPTS — System/User prompt split from prompt_version.csv
+-- =========================================================================
+
+-- 1. Insert prompt parent records
 INSERT INTO prompts (name, analysis_type, created_at, updated_at)
 VALUES
-  ('PII Default', 'pii', now(), now()),
-  ('Theme Default', 'theme', now(), now())
+  ('PII Detection', 'pii', now(), now()),
+  ('Theme Classification', 'theme_classification', now(), now()),
+  ('Story Rating', 'story_rating', now(), now())
 ON CONFLICT (name) DO NOTHING;
 
-INSERT INTO prompt_version (prompt_id, version, system_prompt, user_prompt, is_active, change_note, created_at)
-SELECT
-  p.id,
-  1,
-  'Mask personally identifiable information from the text while preserving meaning and structure.',
-  'Please mask all personally identifiable information in the following content:\n\n{{content}}',
-  TRUE,
-  'Seeded default PII prompt',
-  now()
-FROM prompts p
-WHERE p.name = 'PII Default'
-ON CONFLICT (prompt_id, version) DO NOTHING;
+-- =========================================================================
+-- 2. Seed prompt versions with system_prompt / user_prompt split
+-- =========================================================================
 
+-- 2a. Theme Classification prompt (from prompt_version.csv row 1)
+--     system_prompt = role, guidelines, output format, rules
+--     user_prompt   = "now classify" instruction with {{approved_themes}} and {{statements}} placeholders
 INSERT INTO prompt_version (prompt_id, version, system_prompt, user_prompt, is_active, change_note, created_at)
 SELECT
   p.id,
   1,
-  'Perform thematic analysis and return a concise theme name, definition, keywords, and confidence score.',
-  'Analyze the following content and extract the dominant theme:\n\n{{content}}',
+  -- system_prompt: role definition, classification guidelines, PII rules, output format, field definitions, classification rules
+  E'# Educational Challenge Classification Prompt\n\n## Overview\n\nYou are an expert data classifier specializing in educational barrier analysis. Your task is to analyze a list of challenges affecting children''s education and classify each challenge into predefined themes while identifying any Personal Identifiable Information (PII).\n\n## PII Detection Guidelines\n\n### Flag as `true` if the text contains:\n\n- Personal names (students, teachers, parents, community members)\n- Specific addresses, house numbers, or exact locations\n- Phone numbers, email addresses, or identification numbers\n- Specific ages combined with identifying details\n- Any information that could identify an individual\n\n### Flag as `false` if the text only contains:\n\n- General locations (village names, district names without specific addresses)\n- General demographic information (community, caste, gender without names)\n- Age groups or grade levels without identifying details\n\n---\n\n## Task Instructions\n\nFor each challenge statement provided:\n\n1. **Read carefully** to understand the core barrier being described\n2. **Classify** into the most appropriate theme\n3. **Check for PII** using the guidelines above\n4. **Provide justification** - Explain in 1-2 sentences why this theme was chosen, citing specific words or phrases from the challenge\n5. **Assign confidence score** - Rate your classification confidence from 0.0 to 1.0 (where 1.0 is most confident)\n6. **Flag multi-theme mapping** - Set to `true` if the challenge contains multiple distinct barriers, `false` if it is a single barrier\n7. **Output** in the specified JSON format\n\n## Output Format\n\nReturn ONLY a valid JSON object with this structure (no additional text, markdown, or explanations):\n\n{\n  "classified_data": [\n    {\n      "challenge": "Teachers do not come to school on time",\n      "theme_id": "550e8400-e29b-41d4-a716-446655440007",\n      "theme_name": "Teacher Capacity and Quality Issues",\n      "pii_flag": false,\n      "justification": "The sentence clearly states that teachers do not come to school",\n      "confidence_score": 0.7,\n      "multi_theme_mapped": false\n    },\n    {\n      "challenge": "Lack of toilets in schools",\n      "theme_id": "660f9511-f30c-52e5-b827-557766551118",\n      "theme_name": "School Infrastructure and Facility Issues",\n      "pii_flag": false,\n      "justification": "The sentence mentions inadequate school facilities",\n      "confidence_score": 0.8,\n      "multi_theme_mapped": false\n    }\n  ]\n}\n\nNote: If multiple distinct barriers are mentioned in a single challenge, include multiple theme objects in the array. Also always return the output with 7 key-value JSON object [challenge, theme_id, theme_name, pii_flag, justification, confidence_score, multi_theme_mapped]\n\n---\nCRITICAL: Multi-Theme Classification Rules\nREAD THIS CAREFULLY - THIS IS THE MOST IMPORTANT INSTRUCTION:\nWhen a SINGLE challenge statement contains MULTIPLE DISTINCT barriers:\n\nYou MUST create SEPARATE JSON objects for EACH distinct theme\nEach object should have multi_theme_mapped: true\nEach object should reference the SAME original challenge text\nEach object should have a DIFFERENT theme_id and theme_name\n\nExample:\nInput: "There are no teachers in the school and there are no toilets in the school"\n\nWhen multi_theme_mapped is true, you MUST have created multiple objects. If you set multi_theme_mapped: true but only create one object, this is a CRITICAL ERROR.\n\n---\n## Field Definitions\n\n- **challenge**: The original challenge statement being classified\n- **justification**: A brief explanation (1-2 sentences) citing specific words/phrases that led to this classification\n- **confidence_score**: A decimal value between 0.0-1.0 indicating classification certainty\n- **multi_theme_mapped**: Boolean - `true` if this challenge statement contains multiple distinct barriers requiring multiple theme classifications, `false` otherwise\n\n## Classification Rules\n\n- If a challenge mentions multiple distinct barriers, classify it into MULTIPLE themes (one for each barrier mentioned)\n- Example: "There are no teachers in the school and there are no toilets in the school" should be mapped to both Theme 7 (Teacher Capacity and Quality Issues) AND Theme 6 (School Infrastructure and Facility Issues)\n- Be consistent in classification across similar statements\n- When in doubt between two themes, choose the one most strongly represented by the core issue described.',
+  -- user_prompt: the classification themes placeholder + statement placeholder
+  E'## Classification Themes\n\n{{approved_themes}}\n\n---\n\n**Now classify the following statements:**\n{{statements}}',
   TRUE,
-  'Seeded default theme prompt',
+  'Seeded theme classification prompt v1 — system/user split from prompt_version.csv',
   now()
 FROM prompts p
-WHERE p.name = 'Theme Default'
-ON CONFLICT (prompt_id, version) DO NOTHING;
+WHERE p.name = 'Theme Classification'
+ON CONFLICT (prompt_id, version) DO UPDATE SET system_prompt = EXCLUDED.system_prompt, user_prompt = EXCLUDED.user_prompt;
+
+
+-- 2b. Story Rating prompt (from prompt_version.csv row 2)
+INSERT INTO prompt_version (prompt_id, version, system_prompt, user_prompt, is_active, change_note, created_at)
+SELECT
+  p.id,
+  1,
+  -- system_prompt: role, evaluation criteria, scoring guidelines, composite rules, output format
+  E'# Story Rating Prompt\n\n## Overview\n\nYou are an expert story evaluator specializing in assessing educational and social impact narratives. Your task is to analyze the complete story document and rank it based on three critical criteria: Impact/Outcome, Issue/Challenge clarity, and Action Steps taken.\n\n## Evaluation Criteria\n\n### Criterion 1: Impact and Outcome Score (0.0 - 1.0)\nWhat to Evaluate: Clarity of outcomes, concreteness (measurable/observable changes), and significance.\n\n**Scoring Guidelines:**\n- **0.9-1.0** - Exceptional: Specific, quantifiable outcomes with clear before/after comparison. Measurable metrics provided.\n- **0.7-0.8** - Strong: Clear qualitative outcomes with observable indicators. Noticeable improvements described.\n- **0.4-0.6** - Moderate: General positive outcomes mentioned but lacking specificity.\n- **0.2-0.3** - Weak: Vague references to change with no clear outcome.\n- **0.0-0.1** - No Clear Impact: No outcome mentioned, only intentions.\n\n### Criterion 2: Issue and Challenge Score (0.0 - 1.0)\nWhat to Evaluate: Problem clarity, root cause identification, and sufficient context.\n\n**Scoring Guidelines:**\n- **0.9-1.0** - Exceptional: Crystal clear problem with root cause analysis, explains symptoms and underlying causes.\n- **0.7-0.8** - Strong: Clear problem with good context, some root cause analysis present.\n- **0.4-0.6** - Moderate: Problem mentioned but vague or incomplete, limited context.\n- **0.2-0.3** - Weak: Problem barely identifiable, no context or explanation.\n- **0.0-0.1** - No Clear Problem: No problem described, story lacks focus.\n\n### Criterion 3: Action Steps Score (0.0 - 1.0)\nWhat to Evaluate: Specificity, sequential flow, completeness (planning, execution, adaptation), and problem-solving.\n\n**Scoring Guidelines:**\n- **0.9-1.0** - Exceptional: Detailed, sequential steps clearly outlined. Obstacles and solutions mentioned. Shows adaptation.\n- **0.7-0.8** - Strong: Clear action steps with good implementation details. Some mention of challenges.\n- **0.4-0.6** - Moderate: General actions mentioned but lacking detail or sequence.\n- **0.2-0.3** - Weak: Vague references to doing something, no clear sequence.\n- **0.0-0.1** - No Clear Actions: No actions described, only intentions.\n\n## Composite Score and Tier Assignment\n- Calculate the `composite_score` using the weighted average:\n  **Composite Score = (Impact x 0.4) + (Issue x 0.3) + (Action x 0.3)**\n\n- Assign the `tier` based on individual scores:\n    - **Excellent:** All three scores >= 0.75\n    - **Good:** All three scores >= 0.60\n    - **Developing:** All three scores >= 0.40\n    - **Needs Improvement:** Any score < 0.40\n\n## CRITICAL: JSON Output Format\nYou MUST return EXACTLY 10 fields in your JSON response. ALL fields are mandatory. DO NOT omit any field.\n\nMANDATORY fields (all 10 must be present):\n1. document_language (string)\n2. impact_and_outcome_score (float between 0.0 and 1.0)\n3. impact_justification (string)\n4. issue_and_challenge_score (float between 0.0 and 1.0)\n5. issue_justification (string)\n6. action_steps_score (float between 0.0 and 1.0)\n7. action_justification (string)\n8. composite_score (float between 0.0 and 1.0)\n9. tier (one of: "Excellent", "Good", "Developing", "Needs Improvement")\n10. overall_summary (string)\n\nExample of correct format:\n{\n    "document_language": "English",\n    "impact_and_outcome_score": 0.75,\n    "impact_justification": "The story demonstrates clear, measurable outcomes.",\n    "issue_and_challenge_score": 0.65,\n    "issue_justification": "The root cause is identified as lack of parental awareness.",\n    "action_steps_score": 0.70,\n    "action_justification": "Action steps are described including parent meetings.",\n    "composite_score": 0.71,\n    "tier": "Good",\n    "overall_summary": "Effective intervention addressing low attendance."\n}\n\n## Task Instructions\n1. Read and analyze the complete story document provided below.\n2. Identify the primary language of the document.\n3. Look for THREE key aspects in the story:\n   - **Issues/Challenges**: What problems or challenges are described?\n   - **Action Steps**: What actions were taken to address these challenges?\n   - **Impact/Outcomes**: What were the results or changes achieved?\n4. Score EACH of the THREE criteria with values between 0.0 and 1.0.\n5. Write detailed justifications for EACH of the three scores.\n6. Calculate the composite_score = (impact x 0.4) + (issue x 0.3) + (action x 0.3)\n7. Assign the tier based on the rules above.\n8. Write a brief overall_summary (2-3 sentences).\n9. Return ONLY the JSON object with ALL 10 FIELDS. No extra text, no markdown, no code blocks.',
+  -- user_prompt: story content placeholder
+  E'## Story Document to Analyze\n\n{{story_content}}\n\n---\n\nAnalyze the story document above and return the evaluation as a valid JSON object with all 10 required fields.',
+  TRUE,
+  'Seeded story rating prompt v1 — system/user split from prompt_version.csv',
+  now()
+FROM prompts p
+WHERE p.name = 'Story Rating'
+ON CONFLICT (prompt_id, version) DO UPDATE SET system_prompt = EXCLUDED.system_prompt, user_prompt = EXCLUDED.user_prompt;
+
+
+-- 2c. PII Detection prompt (from prompt_version.csv row 3)
+INSERT INTO prompt_version (prompt_id, version, system_prompt, user_prompt, is_active, change_note, created_at)
+SELECT
+  p.id,
+  1,
+  -- system_prompt: role, task description, PII guidelines, output format, requirements
+  E'# PII Detection Prompt\n\nYou are a PII Detection Specialist tasked with analyzing educational content for personally identifiable information.\n\n## Task\nAnalyze the provided text and identify if it contains any personally identifiable information (PII). Return your findings in a structured JSON format.\n\n## Context\nYou will be analyzing educational barrier and solution content including action steps and impact statements from educational programs and initiatives.\n\n## PII Detection Guidelines\n\n### Flag as `true` if the text contains:\n\n- Personal names (students, teachers, parents, community members)\n- Specific addresses, house numbers, or exact locations\n- Phone numbers, email addresses, or identification numbers\n- Specific ages combined with identifying details\n- Any information that could identify an individual\n\n### Flag as `false` if the text only contains:\n\n- General locations (village names, district names without specific addresses)\n- General demographic information (community, caste, gender without names)\n- Age groups or grade levels without identifying details\n\n## Instructions\n1. Carefully read and analyze the entire text\n2. Identify any potential PII based on the criteria above\n3. Determine confidence level (0.0 to 1.0 scale)\n4. Provide clear justification for your decision\n5. Return response in the exact JSON format specified\n\n## Output Format\nRespond with this exact JSON structure:\n{\n    "pii_flag": true,\n    "justification": "Brief explanation of why PII was or was not detected",\n    "confidence_score": 0.0\n}\n\n## Requirements\n- Use boolean values (true/false) for pii_flag\n- Keep justification concise and specific\n- Confidence score must be between 0.0 and 1.0\n- Focus only on clear, identifiable PII\n- Do not flag indirect identifiers or unique demographic combinations',
+  -- user_prompt: text placeholder
+  E'Analyse the following text:\n{{text}}',
+  TRUE,
+  'Seeded PII detection prompt v1 — system/user split from prompt_version.csv',
+  now()
+FROM prompts p
+WHERE p.name = 'PII Detection'
+ON CONFLICT (prompt_id, version) DO UPDATE SET system_prompt = EXCLUDED.system_prompt, user_prompt = EXCLUDED.user_prompt;
