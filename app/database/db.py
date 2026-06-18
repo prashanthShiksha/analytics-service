@@ -11,6 +11,7 @@ logger = logging.getLogger("analytics_service.db")
 BASE_DIR = Path(__file__).resolve().parents[2]
 SCHEMA_FILE = BASE_DIR / "schema.sql"
 SEED_PROMPTS_FILE = BASE_DIR / "seed_prompts.sql"
+SEED_THEMES_FILE = BASE_DIR / "seed_themes.sql"
 
 class Database:
     def __init__(self):
@@ -47,6 +48,10 @@ class Database:
             # Always run the seed script to keep prompts in sync with seed_prompts.sql
             seed_sql = SEED_PROMPTS_FILE.read_text(encoding="utf-8")
             await conn.execute(seed_sql)
+
+            # Always run the themes seed script to seed initial approved taxonomies
+            seed_themes_sql = SEED_THEMES_FILE.read_text(encoding="utf-8")
+            await conn.execute(seed_themes_sql)
 
             logger.info("Database schema initialized successfully.")
 
