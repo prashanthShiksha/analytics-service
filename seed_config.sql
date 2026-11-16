@@ -20,8 +20,9 @@
 -- Other kinds of config are added to this file in the same pattern (one CONFIG block each).
 --
 -- Rules every block follows (the file is a seed, never a migration):
---   * The whole seed is a NO-OP when tenant 'mitra' does not exist (the tenant is an environment row;
---     this file never creates it).
+--   * Tenant 'mitra' is inserted first when this database does not have it (section 0; an existing tenant is
+--     never touched). Every other statement is still guarded by `WHERE EXISTS (... tenant ...)`, so it is a
+--     NO-OP if that tenant is somehow absent (for example its name is taken by another tenant code).
 --   * Nothing is ever overwritten. leader_category / programs / config are inserted ON CONFLICT DO NOTHING
 --     under fixed ids; version 1 of a config is inserted ONLY while that config has no version row at
 --     all, so a config edited with a new config_version (old one deactivated, kept as history), or one
@@ -37,6 +38,15 @@
 -- `-- CONFIG <config_type> <config_source> <session_type>` (tests/seed_support.py reads the file through
 -- these markers, so keep the layout of a block as it is).
 -- =========================================================================
+
+-- =========================================================================
+-- 0. The tenant (created here when this database does not have it yet; an existing tenant is never touched.
+--    ON CONFLICT DO NOTHING without a column also ignores a clash on the unique name, so it can never fail the start)
+-- =========================================================================
+
+INSERT INTO tenant (name, code, created_by)
+VALUES ('Mitra', 'mitra', 'seed')
+ON CONFLICT DO NOTHING;
 
 -- =========================================================================
 -- 1. Leader categories and programs (one per persona; the program is named "1M Voice")
